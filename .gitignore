@@ -2,3 +2,4 @@ raw_data/
 merged_juul_mapped_31cols.csv
 __pycache__
 juul_48_enriched.csv
+raw_data/

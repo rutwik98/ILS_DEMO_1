@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import os
 import re
+from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
 csv.field_size_limit(1_000_000_000)
@@ -20,10 +21,19 @@ from pandas.errors import ParserError
 from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 
-CSV_FILE = "JUUL_Labs_Collection_California_48.csv"
-OUTPUT_FILE = "juul_48_enriched.csv"
-NUM_TOPICS = 8
-TOP_WORDS_PER_TOPIC = 8
+@dataclass(frozen=True)
+class ProcessingConfig:
+    csv_file: str = (
+        "/Users/rutwikpatil/Desktop/Reliath/JUUL_Labs_Collection_California/raw_data/"
+        "JUUL_Labs_Collection_California_48.csv"
+    )
+    output_file: str = "juul_48_enriched.csv"
+    num_topics: int = 8
+    top_words_per_topic: int = 8
+    tfidf_top_n: int = 5
+
+
+CONFIG = ProcessingConfig()
 
 COLUMN_MAP = {
     "case": "Related Case",
@@ -36,13 +46,12 @@ COLUMN_MAP = {
     "recipient": "TO",
     "copied": "CC",
     "mentioned": "BCC",
-    "subject": "EmailSubject",
+    "title": "EmailSubject",
     "datesent": "SentDate",
     "datereceived": "ReceivedDate",
     "date_modified_industry": "DateModified",
-    "date_added_industry": "DateCreated",
-    "filename": "FileName",
-    "format": "FileType",
+    "datesent": "DateCreated",
+    "id": "FileName",
     "filepath": "Location",
     "ocr_text": "TextPath",
     "language": "Language",
@@ -59,7 +68,6 @@ TARGET_COLS: List[str] = [
     "BegAtt",
     "EndAtt",
     "Custodian",
-    "CustodianDuplicate",
     "FROM",
     "TO",
     "CC",
@@ -74,8 +82,6 @@ TARGET_COLS: List[str] = [
     "FileExtension",
     "MD5Hash",
     "Location",
-    "TextPath",
-    "File Size",
     "Principal Custodian",
     "Document Types",
     "Language",
@@ -178,12 +184,13 @@ def transform_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.rename(columns=COLUMN_MAP)
     text_series = df.get("TextPath", pd.Series(index=df.index, dtype="object"))
     df["EmailContent"] = text_series.map(clean_email_body)
+    if "Document Types" in df.columns:
+        df["FileType"] = df["Document Types"]
     if "FileName" in df.columns:
         splits = df["FileName"].astype(str).str.rsplit(".", n=1)
         df["FileExtension"] = splits.str[-1].where(splits.str.len() > 1).str.lower()
     if "Custodian" in df.columns:
         df["Principal Custodian"] = df["Custodian"]
-        df["CustodianDuplicate"] = df["Custodian"]
     for col in TARGET_COLS:
         if col not in df.columns:
             df[col] = pd.NA
@@ -289,7 +296,7 @@ def run_lda(text_series: pd.Series) -> Tuple[pd.Series, Dict[int, str]]:
     dtm = vectorizer.fit_transform(texts[mask])
     if dtm.shape[0] == 0:
         return pd.Series(pd.NA, index=text_series.index), {}
-    n_topics = min(NUM_TOPICS, dtm.shape[0])
+    n_topics = min(CONFIG.num_topics, dtm.shape[0])
     lda = LatentDirichletAllocation(
         n_components=n_topics,
         max_iter=10,
@@ -301,7 +308,7 @@ def run_lda(text_series: pd.Series) -> Tuple[pd.Series, Dict[int, str]]:
 
     topic_labels: Dict[int, str] = {}
     for topic_idx, topic in enumerate(lda.components_):
-        top_indices = topic.argsort()[:-TOP_WORDS_PER_TOPIC - 1:-1]
+        top_indices = topic.argsort()[:-CONFIG.top_words_per_topic - 1:-1]
         words = [feature_names[i] for i in top_indices]
         topic_labels[topic_idx] = ", ".join(words)
 
@@ -315,7 +322,9 @@ def run_lda(text_series: pd.Series) -> Tuple[pd.Series, Dict[int, str]]:
     return result, topic_labels
 
 
-def extract_keywords_tfidf(text_series: pd.Series, top_n: int = 5) -> pd.Series:
+def extract_keywords_tfidf(text_series: pd.Series, top_n: Optional[int] = None) -> pd.Series:
+    if top_n is None:
+        top_n = CONFIG.tfidf_top_n
     texts = text_series.fillna("").astype(str)
     if not texts.str.strip().any():
         return pd.Series(pd.NA, index=text_series.index)
@@ -343,10 +352,10 @@ def extract_keywords_tfidf(text_series: pd.Series, top_n: int = 5) -> pd.Series:
 
 
 def main() -> None:
-    if not os.path.exists(CSV_FILE):
-        raise SystemExit(f"Missing source file: {CSV_FILE}")
+    if not os.path.exists(CONFIG.csv_file):
+        raise SystemExit(f"Missing source file: {CONFIG.csv_file}")
     usecols = list(COLUMN_MAP.keys())
-    raw_df = load_dataframe(CSV_FILE, usecols)
+    raw_df = load_dataframe(CONFIG.csv_file, usecols)
     normalized = transform_dataframe(raw_df)
     normalized["Sentiment"] = compute_sentiment(normalized["EmailContent"])
     lda_topics, topic_dict = run_lda(normalized["EmailContent"])
@@ -356,8 +365,8 @@ def main() -> None:
     missing_topics = normalized["Key/Main Topics"].isna()
     if missing_topics.any():
         normalized.loc[missing_topics, "Key/Main Topics"] = normalized.loc[missing_topics, "Topics"]
-    normalized.to_csv(OUTPUT_FILE, index=False)
-    print(f"Saved enriched dataset to {OUTPUT_FILE} ({len(normalized)} rows)")
+    normalized.to_csv(CONFIG.output_file, index=False)
+    print(f"Saved enriched dataset to {CONFIG.output_file} ({len(normalized)} rows)")
     if topic_dict:
         print("\nTop words per topic:")
         for idx, words in topic_dict.items():

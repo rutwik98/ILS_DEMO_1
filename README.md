@@ -6,7 +6,6 @@ Utilities to ingest, normalize, and enrich the JUUL Labs California document col
 
 - **Schema discovery** – `inspect_headers.py` and `view_dataframe.py` let us peek at headers/rows straight from the source exports, which confirmed every file follows the same (messy) pipe layout. That validation step was essential before attempting any automation.
 - **Bulk normalization** – `normalize_collection.py` walks every CSV matching `JUUL_Labs_Collection_California*.csv`, maps Relativity-style fields to a friendlier 31‑column target schema, and merges them into `merged_juul_mapped_31cols.csv`. The script also fixes common gaps (e.g., derives `FileExtension`, clones custodians, seeds empty columns) so analysts receive a consistent table regardless of the originating production.
-- **Column enrichment** – During normalization we deliberately populate/derive fields that are either missing or inconsistently delivered: `FileExtension` (parsed from `FileName` for downstream filtering), `Principal Custodian` and `CustodianDuplicate` (mirror of `Custodian` so legal teams can pivot on any alias), and `EmailContent` (initially copied from `ocr_text` so later NLP has a clean text column). When processing tranche 48, we further extend the schema with `Sentiment`, `Topics`, and `Key/Main Topics` so reviewers can sort, filter, and summarize communications without opening every document.
 - **Deep dive + enrichment** – `analyze_single_file.py` focuses on the largest tranche (`JUUL_Labs_Collection_California_48.csv`). In addition to the normalization above it:
   - Strips header chatter from `ocr_text` so subsequent NLP looks at message bodies.
   - Computes sentiment using NLTK’s VADER (with safe fallbacks) for reviewer triage.
@@ -54,20 +53,4 @@ Together, these steps document the full pipeline from raw productions to an enri
 - nltk (VADER sentiment; script auto-downloads the lexicon when absent)
 - Optional: `vaderSentiment` package as a fallback sentiment analyzer
 
-Install via:
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install pandas numpy scikit-learn nltk vaderSentiment
-```
 
-## Data Handling Notes
-
-- Raw CSVs stay outside git (`raw_data/` plus `juul_48_enriched.csv`) to respect GitHub size limits and privacy.
-- The enriched CSV remains over 100 MB, so only the zipped artifact is committed. After pulling the repo, unzip `juul_48_enriched.csv.zip` before running notebooks or BI tooling.
-
-## Next Ideas
-
-1. Add automated unit tests around the parsing fallbacks and NLP helpers.
-2. Provide a Docker image or requirements lockfile for reproducible environments.
-3. Wire the enrichment output into dashboards (Streamlit/Power BI) for rapid review.
